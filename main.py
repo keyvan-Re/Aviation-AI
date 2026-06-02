@@ -20,7 +20,8 @@ import streamlit as st
 from langchain_community.document_loaders import PyPDFDirectoryLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_openai import ChatOpenAI
-from langchain.memory import ConversationBufferMemory
+from langchain_classic.memory import ConversationBufferMemory
+#from langchain.memory import ConversationBufferMemory
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage
