@@ -48,8 +48,8 @@ jsonpointer==3.1.1
 jsonschema==4.26.0
 jsonschema-specifications==2025.9.1
 kubernetes==35.0.0
-langchain==0.2.16
-langchain-classic==1.0.3
+langchain
+langchain-classic
 langchain-community==0.2.16
 langchain-openai==0.1.23
 langchain-text-splitters==0.2.4
