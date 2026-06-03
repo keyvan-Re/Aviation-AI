@@ -5,7 +5,8 @@ from openai import OpenAI
 import streamlit as st
 from langchain_community.vectorstores import FAISS
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-from langchain.memory import ConversationBufferMemory
+from langchain_classic.memory import ConversationBufferMemory
+#from langchain.memory import ConversationBufferMemory
 from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage
 from typing import List
