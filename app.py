@@ -6,7 +6,6 @@ import streamlit as st
 from langchain_community.vectorstores import FAISS
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_classic.memory import ConversationBufferMemory
-#from langchain.memory import ConversationBufferMemory
 from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage
 from typing import List
@@ -117,12 +116,13 @@ else:
 
     st.title("✈️ Aviation AI Assistant")
 
-        # --- Load Offline Vector Database (FAISS) ---
+    # --- Load Offline Vector Database (FAISS) ---
     @st.cache_resource
     def load_vector_db():
         embeddings = OpenAIEmbeddings(
             openai_api_key=OPENAI_API_KEY, 
-            openai_api_base=BASE_URL
+            openai_api_base=BASE_URL,
+            request_timeout=30 # تنظیم تایم اوت برای جلوگیری از گیر کردن بی نهایت
         )
         db = FAISS.load_local(
             "my_vector_db", 
@@ -131,20 +131,26 @@ else:
         )
         return db.as_retriever(search_kwargs={"k": 3})
 
-    # اضافه کردن try-except برای گرفتن خطای احتمالی
+    # مدیریت خطای لود دیتابیس
     try:
         retriever = load_vector_db()
-        st.success("Database Loaded Successfully!") # اگر این پیام را دیدید یعنی مشکل از اینجا نیست
     except Exception as e:
         st.error(f"Error loading vector database: {e}")
         st.stop()
 
-    retriever = load_vector_db()
+    # تنظیمات مدل ها همراه با timeout
+    llm = ChatOpenAI(
+        model_name="gpt-4o", 
+        openai_api_key=OPENAI_API_KEY, 
+        base_url=BASE_URL,
+        request_timeout=45 # تنظیم تایم اوت ۴۵ ثانیه ای
+    )
     
-    llm = ChatOpenAI(model_name="gpt-4o", openai_api_key=OPENAI_API_KEY, base_url=BASE_URL)
-    
-    # کلاینت خام OpenAI برای استفاده از Whisper (تبدیل صدا به متن)
-    openai_client = OpenAI(api_key=OPENAI_API_KEY, base_url=BASE_URL)
+    openai_client = OpenAI(
+        api_key=OPENAI_API_KEY, 
+        base_url=BASE_URL,
+        timeout=30 # تنظیم تایم اوت ۳۰ ثانیه ای
+    )
     
     memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True, output_key="answer")
     
@@ -171,11 +177,9 @@ else:
     if is_current_archived:
         st.warning("این چت آرشیو شده است و فقط قابل خواندن می‌باشد.")
     else:
-        # ایجاد دو ستون برای قرارگیری دکمه‌های امکانات جانبی
         col1, col2, _ = st.columns([2, 2, 6])
         
         with col1:
-            # استفاده از آیکون متریال و نام مینیمال همراه با راهنمای شناور (help)
             with st.popover("Attach", icon=":material/attachment:", help="Upload Image or Map"):
                 uploaded_image = st.file_uploader(
                     "Select File", 
@@ -189,33 +193,33 @@ else:
                     "Record your message",
                     key=f"audio_uploader_{st.session_state.current_chat_id}_{st.session_state.file_uploader_key}"
                 )
-
             
         if uploaded_image:
             st.info(f"✅ Image '{uploaded_image.name}' attached.")
         if recorded_audio:
             st.info("✅ Voice message recorded. Submit to transcribe and ask.")
 
-        # دریافت ورودی متنی (در صورتی که کاربر تایپ کند)
         text_prompt = st.chat_input("Ask your question...")
-        
-        # تعیین پرامپت نهایی
         final_prompt = None
         
         if text_prompt:
             final_prompt = text_prompt
         elif recorded_audio:
-            # اگر کاربر چیزی تایپ نکرد اما صدا ضبط کرد، صدا را به متن تبدیل می‌کنیم
             with st.spinner("🗣️ Transcribing voice..."):
-                # Whisper برای تشخیص فرمت به پسوند فایل نیاز دارد
-                recorded_audio.name = "audio.wav" 
-                transcript = openai_client.audio.transcriptions.create(
-                    model="whisper-1",
-                    file=recorded_audio
-                )
-                final_prompt = transcript.text
+                try:
+                    print(">>> LOG: Sending audio to Whisper API...")
+                    recorded_audio.name = "audio.wav" 
+                    transcript = openai_client.audio.transcriptions.create(
+                        model="whisper-1",
+                        file=recorded_audio
+                    )
+                    print(">>> LOG: Audio transcription successful.")
+                    final_prompt = transcript.text
+                except Exception as e:
+                    print(f">>> ERROR: Audio transcription failed: {e}")
+                    st.error(f"خطا در تبدیل صدا به متن. لطفاً دوباره تلاش کنید: {e}")
+                    st.stop()
 
-        # ادامه منطق در صورتی که ورودی متنی یا صوتی داشته باشیم
         if final_prompt:
             
             if len(db_messages) == 0:
@@ -231,7 +235,16 @@ else:
             with st.chat_message("assistant"):
                 with st.spinner("Thinking & Analyzing..."):
                     
-                    source_docs = retriever.invoke(final_prompt)
+                    # مرحله اول: جستجو در دیتابیس و Embeddings
+                    try:
+                        print(">>> LOG: Generating embeddings and searching FAISS...")
+                        source_docs = retriever.invoke(final_prompt)
+                        print(">>> LOG: FAISS search successful.")
+                    except Exception as e:
+                        print(f">>> ERROR: Retriever (Embeddings) failed: {e}")
+                        st.error(f"ارتباط با سرور برای جستجوی داکیومنت قطع شد (Embeddings Error): {e}")
+                        st.stop()
+
                     context_text = "\n\n".join([doc.page_content for doc in source_docs])
                     
                     system_prompt = f"""Use the following pieces of context to answer the user's question.
@@ -258,11 +271,18 @@ Helpful Answer in English:"""
                         })
                     
                     human_msg = HumanMessage(content=message_content)
-                    
                     chat_history = memory.chat_memory.messages
                     
-                    result = llm.invoke(chat_history + [human_msg])
-                    answer = result.content
+                    # مرحله دوم: فراخوانی مدل (LLM)
+                    try:
+                        print(">>> LOG: Sending prompt and context to LLM (gpt-4o)...")
+                        result = llm.invoke(chat_history + [human_msg])
+                        print(">>> LOG: LLM response received successfully.")
+                        answer = result.content
+                    except Exception as e:
+                        print(f">>> ERROR: LLM invocation failed: {e}")
+                        st.error(f"سرور پاسخ نمی‌دهد (LLM API Error). ممکن است اینترنت یا پراکسی مشکل داشته باشد: {e}")
+                        st.stop()
                     
                     st.markdown(answer)
                     
@@ -279,6 +299,5 @@ Helpful Answer in English:"""
                     auth.save_message(st.session_state.current_chat_id, "assistant", answer, sources_for_db)
                     memory.save_context({"question": final_prompt}, {"answer": answer})
             
-            # تغییر کلید آپلودرها برای خالی شدن فرم‌ها در پیام‌های بعدی
             st.session_state.file_uploader_key += 1
             st.rerun()
