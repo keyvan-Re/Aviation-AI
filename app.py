@@ -1,4 +1,6 @@
+# full_app_code_no_keys.py
 import sys
+import os # <<< os اضافه شد
 import json
 import base64
 from openai import OpenAI
@@ -11,6 +13,9 @@ from langchain_core.messages import HumanMessage
 from typing import List
 
 import auth
+
+# --- لاگ اولیه برای اطمینان از اجرای کد ---
+print(">>> LOG: app.py execution started. Initializing...")
 
 auth.init_db()
 
@@ -109,48 +114,60 @@ else:
                             if st.button("Confirm Delete 🗑️", key=f"del_arch_{chat_id}"):
                                 auth.delete_chat(chat_id)
                                 st.rerun()
-
+    
     # --- Core Application Configuration ---
-    OPENAI_API_KEY = "sk-jOn337n0y1yYP7kWTQVFRzuCsvfXlA5Y56kUDkRaQeoqhORC" 
-    BASE_URL = "https://api.gapgpt.app/v1" 
+    # کلیدها از اینجا حذف شدند و از st.secrets یا os.environ خوانده می شوند
+    try:
+        OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
+        BASE_URL = st.secrets["BASE_URL"]
+        print(">>> LOG: Successfully loaded secrets from st.secrets.")
+    except KeyError:
+        st.error("FATAL ERROR: `OPENAI_API_KEY` or `BASE_URL` not found in Streamlit Secrets. Please set them.")
+        print(">>> ERROR: Secrets not found. Stopping execution.")
+        st.stop()
+    
 
     st.title("✈️ Aviation AI Assistant")
 
-    # --- Load Offline Vector Database (FAISS) ---
     @st.cache_resource
     def load_vector_db():
+        print(">>> LOG: Creating OpenAIEmbeddings object...")
         embeddings = OpenAIEmbeddings(
             openai_api_key=OPENAI_API_KEY, 
             openai_api_base=BASE_URL,
-            request_timeout=30 # تنظیم تایم اوت برای جلوگیری از گیر کردن بی نهایت
+            request_timeout=30
         )
+        print(">>> LOG: Loading FAISS database...")
         db = FAISS.load_local(
             "my_vector_db", 
             embeddings, 
             allow_dangerous_deserialization=True
         )
+        print(">>> LOG: FAISS database loaded successfully.")
         return db.as_retriever(search_kwargs={"k": 3})
 
-    # مدیریت خطای لود دیتابیس
     try:
+        print(">>> LOG: Attempting to load vector database...")
         retriever = load_vector_db()
+        print(">>> LOG: Vector database loaded and retriever created.")
     except Exception as e:
         st.error(f"Error loading vector database: {e}")
+        print(f">>> ERROR: Failed to load vector DB: {e}")
         st.stop()
 
-    # تنظیمات مدل ها همراه با timeout
+    print(">>> LOG: Initializing ChatOpenAI and OpenAI client...")
     llm = ChatOpenAI(
         model_name="gpt-4o", 
         openai_api_key=OPENAI_API_KEY, 
         base_url=BASE_URL,
-        request_timeout=45 # تنظیم تایم اوت ۴۵ ثانیه ای
+        request_timeout=45
     )
-    
     openai_client = OpenAI(
         api_key=OPENAI_API_KEY, 
         base_url=BASE_URL,
-        timeout=30 # تنظیم تایم اوت ۳۰ ثانیه ای
+        timeout=30
     )
+    print(">>> LOG: LLM and OpenAI clients initialized successfully.")
     
     memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True, output_key="answer")
     
@@ -171,11 +188,10 @@ else:
                         st.write(f"**Source {i+1} (Page {page_number}):**")
                         st.write(doc_dict.get('content', ''))
 
-    # --- New Chat Input, Image Uploader & Voice Recorder ---
     is_current_archived = any(c[0] == st.session_state.current_chat_id for c in archived_chats)
     
     if is_current_archived:
-        st.warning("این چت آرشیو شده است و فقط قابل خواندن می‌باشد.")
+        st.warning("این چت آرشیو شده است و فقط قابل خواندن میباشد.")
     else:
         col1, col2, _ = st.columns([2, 2, 6])
         
@@ -221,7 +237,6 @@ else:
                     st.stop()
 
         if final_prompt:
-            
             if len(db_messages) == 0:
                 auth.update_chat_title(st.session_state.current_chat_id, final_prompt[:30] + "...")
             
@@ -234,8 +249,6 @@ else:
                 
             with st.chat_message("assistant"):
                 with st.spinner("Thinking & Analyzing..."):
-                    
-                    # مرحله اول: جستجو در دیتابیس و Embeddings
                     try:
                         print(">>> LOG: Generating embeddings and searching FAISS...")
                         source_docs = retriever.invoke(final_prompt)
@@ -249,18 +262,15 @@ else:
                     
                     system_prompt = f"""Use the following pieces of context to answer the user's question.
 If you don't know the answer, just say that you don't know, don't try to make up an answer.
-
 IMPORTANT INSTRUCTIONS:
 1. You MUST answer entirely in ENGLISH.
 2. You MUST cite the source page numbers in your answer (e.g., "According to Page 5...").
 3. If an image or map is provided, analyze it carefully along with the text context to give a precise answer.
-
 Context:
 {context_text}
-
 Question: {final_prompt}
 Helpful Answer in English:"""
-
+                    
                     message_content = [{"type": "text", "text": system_prompt}]
                     
                     if uploaded_image:
@@ -273,7 +283,6 @@ Helpful Answer in English:"""
                     human_msg = HumanMessage(content=message_content)
                     chat_history = memory.chat_memory.messages
                     
-                    # مرحله دوم: فراخوانی مدل (LLM)
                     try:
                         print(">>> LOG: Sending prompt and context to LLM (gpt-4o)...")
                         result = llm.invoke(chat_history + [human_msg])
@@ -281,7 +290,7 @@ Helpful Answer in English:"""
                         answer = result.content
                     except Exception as e:
                         print(f">>> ERROR: LLM invocation failed: {e}")
-                        st.error(f"سرور پاسخ نمی‌دهد (LLM API Error). ممکن است اینترنت یا پراکسی مشکل داشته باشد: {e}")
+                        st.error(f"سرور پاسخ نمیدهد (LLM API Error). ممکن است اینترنت یا پراکسی مشکل داشته باشد: {e}")
                         st.stop()
                     
                     st.markdown(answer)
@@ -301,3 +310,6 @@ Helpful Answer in English:"""
             
             st.session_state.file_uploader_key += 1
             st.rerun()
+
+print(">>> LOG: app.py execution finished.")
+
